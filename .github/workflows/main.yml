@@ -1,0 +1,63 @@
+name: Unlighthouse CI (static + Gulp)
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  unlighthouse:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        run: npm ci
+
+      # Construcción del sitio
+      - name: Build site
+        run: |
+          if npm run | grep -q " build"; then
+            npm run build
+          else
+            npx gulp build || npx gulp
+          fi
+
+      # Servidor estático necesario para la auditoría
+      - name: Install static server
+        run: npm install -g http-server wait-on
+
+      - name: Pick serve dir
+        id: pickdir
+        run: |
+          if [ -f "./build/index.html" ]; then
+            echo "DIR=./build" >> $GITHUB_OUTPUT
+          else
+            echo "DIR=." >> $GITHUB_OUTPUT
+          fi
+
+      - name: Start static server
+        run: |
+          http-server "${{ steps.pickdir.outputs.DIR }}" -p 4173 -s &
+          wait-on http://127.0.0.1:4173
+
+      - name: Install Unlighthouse
+        run: npm i -g @unlighthouse/cli puppeteer
+
+      - name: Run Unlighthouse
+        run: |
+          unlighthouse-ci --site http://127.0.0.1:4173 \
+            --budget 80 \
+            --reporter jsonExpanded \
+            --build-static \
+            --chrome-flags="--no-sandbox"
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: unlighthouse-report
+          path: .unlighthouse
